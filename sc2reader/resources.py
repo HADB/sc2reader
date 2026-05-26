@@ -468,9 +468,32 @@ class Replay(Resource):
         self.client = dict()
 
         # For players, we can use the details file to look up additional
-        # information. detail_id marks the current index into this data.
-        detail_id = 0
+        # information. Match slots to details by toon_handle for reliability.
+        detail_players = list(details["players"])
+        # Build toon_handle lookup from detail_data bnet info
+        detail_by_toon: dict = {}
+        for dp in detail_players:
+            bnet = dp["bnet"]
+            if bnet["uid"]:
+                toon = f"{bnet['region']}-S2-{bnet['subregion']}-{bnet['uid']}"
+                detail_by_toon[toon] = dp
+
         player_id = 1
+        detail_id = 0
+
+        def find_detail_data(toon_handle):
+            """Find matching detail_data by toon_handle, fallback to sequential."""
+            nonlocal detail_id
+            if toon_handle and toon_handle in detail_by_toon:
+                detail_data = detail_by_toon.pop(toon_handle)
+                detail_id += 1
+                return detail_data
+            # Fallback: sequential order (for anonymous/coop replays)
+            if detail_id < len(detail_players):
+                result = detail_players[detail_id]
+                detail_id += 1
+                return result
+            return detail_players[0] if detail_players else {}
 
         # Assume that the first X map slots starting at 1 are player slots
         # so that we can assign player ids without the map
@@ -480,6 +503,7 @@ class Replay(Resource):
 
             if slot_data["control"] == 2:
                 if slot_data["observe"] == 0:
+                    detail_data = find_detail_data(slot_data.get("toon_handle"))
                     self.entities.append(
                         Participant(
                             slot_id,
@@ -487,11 +511,10 @@ class Replay(Resource):
                             user_id,
                             initData["user_initial_data"][user_id],
                             player_id,
-                            details["players"][detail_id],
+                            detail_data,
                             self.attributes.get(player_id, dict()),
                         )
                     )
-                    detail_id += 1
                     player_id += 1
 
                 else:
@@ -506,18 +529,17 @@ class Replay(Resource):
                     )
                     player_id += 1
 
-            elif slot_data["control"] == 3 and detail_id < len(details["players"]):
-                # detail_id check needed for coop
+            elif slot_data["control"] == 3 and detail_id < len(detail_players):
+                detail_data = find_detail_data(slot_data.get("toon_handle"))
                 self.entities.append(
                     Computer(
                         slot_id,
                         slot_data,
                         player_id,
-                        details["players"][detail_id],
+                        detail_data,
                         self.attributes.get(player_id, dict()),
                     )
                 )
-                detail_id += 1
                 player_id += 1
 
         def get_team(team_id):
@@ -548,6 +570,14 @@ class Replay(Resource):
             # Index by pid so that we can match events to players in pre-HotS replays
             self.entity[entity.pid] = entity
 
+        # Detect Archon mode: Tandem Leader Slot has numeric values
+        is_archon = any(
+            self.attributes.get(entity.pid, {}).get("Tandem Leader Slot")
+            not in (None, "None")
+            for entity in self.entities
+            if hasattr(entity, "pid")
+        )
+
         # Pull results up for teams
         for team in self.teams:
             results = {p.result for p in team.players}
@@ -569,7 +599,7 @@ class Replay(Resource):
         self.client = self.human
         self.person = self.entity
 
-        self.real_type = utils.get_real_type(self.teams)
+        self.real_type = "Archon" if is_archon else utils.get_real_type(self.teams)
 
         # Assign the default region to computer players for consistency
         # We know there will be a default region because there must be

@@ -710,6 +710,24 @@ class TestReplays(unittest.TestCase):
             factory = sc2reader.factories.SC2Factory()
             factory.load_replay(replayfilename)
 
+    def test_archon_mode(self):
+        """Archon mode replays have 4 players but only 2 tracker pids.
+        Should not produce conflicting results warnings."""
+        replay = sc2reader.load_replay("test_replays/5.0.15/95435_1_archon.SC2Replay")
+        self.assertEqual(replay.type, "2v2")
+        self.assertEqual(len(replay.players), 4)
+
+        # Archon mode: Tandem Leader Slot has numeric values for leaders
+        tandem_slots = [
+            replay.attributes.get(p.pid, {}).get("Tandem Leader Slot")
+            for p in replay.players
+        ]
+        self.assertIn("0", tandem_slots)
+        self.assertIn("1", tandem_slots)
+
+        # Winner should be set based on detail_data
+        self.assertIsNotNone(replay.winner)
+
 
     def test_anonymous_replay(self):
         replayfilename = "test_replays/4.1.2.60604/1.SC2Replay"
